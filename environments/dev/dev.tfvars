@@ -1,7 +1,7 @@
 #------------------Common values values------------------#
 aws_region     = "us-gov-west-1"
-aws_access_key = ""
-aws_secret_key = ""
+# aws_access_key = ""
+# aws_secret_key = ""
 
 #----------------Common Value------------------------------"
  env           = "dev"  # Change env as per enviromet Dev/test/Prod
