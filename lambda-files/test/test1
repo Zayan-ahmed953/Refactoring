@@ -1,2 +1,0 @@
-def handler(event, context):
-  return {"stateusCode": 200, "body": "Hellow from test functions lambda!!!!"}
