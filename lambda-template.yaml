@@ -1,0 +1,18 @@
+Parameters:
+  LambdaName:
+    Type: String
+  LambdaSourceBucket:
+    Type: String
+  LambdaSourceKey:
+    Type: String
+Resources:
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaName
+      Runtime: python3.11
+      Handler: index.handler
+      Role: arn:aws-us-gov:iam::352940330073:role/MyLambdaRole
+      Code:
+        S3Bucket: !Ref LambdaSourceBucket
+        S3Key: !Ref LambdaSourceKey

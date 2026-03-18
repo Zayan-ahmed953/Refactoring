@@ -1,0 +1,17 @@
+name: Runner smoke test
+on: workflow_dispatch
+jobs:
+  smoke:
+    runs-on:
+      group: dea-dccc-prod
+      labels: [self-hosted, linux, x64]
+    steps:
+      - name: Print runner info and public IP
+        run: |
+          echo "OS=$RUNNER_OS ARCH=$RUNNER_ARCH"
+          echo -n "Public IP: "
+          curl -s https://api.ipify.org || true
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0

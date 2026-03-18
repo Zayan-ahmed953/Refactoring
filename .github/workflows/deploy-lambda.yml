@@ -1,0 +1,39 @@
+name: Deploy Lambda to S3
+on:
+  workflow_dispatch:
+    inputs:
+      lambda:
+        description: "Which Lambda folder to deploy (inside lambda-files/)?"
+        required: false
+        default: "test"
+jobs:
+  deploy:
+    runs-on: DEA-DCCC-PROD-GHA-RUNNER-2
+    env:
+      ACTIONS_STEP_DEBUG: true
+      NODE_TLS_REJECT_UNAUTHORIZED: 0  # temporary test only
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws-us-gov:iam::352935757753:role/dea-dccc-prod-assume-role
+          aws-region: us-gov-west-1
+          role-skip-session-tagging: true
+      - name: Zip selected Lambda code
+        run: |
+          folder="lambda-files/${{ github.event.inputs.lambda }}"
+          zip_file="${{ github.event.inputs.lambda }}.zip"
+          cd "$folder"
+          zip -r "../$zip_file" .
+      - name: Upload Lambda code to S3
+        run: |
+          aws s3 cp "lambda-files/${{ github.event.inputs.lambda }}.zip" \
+            s3://352940330073-lambda-source/${{ github.event.inputs.lambda }}.zip
+      - name: Create manifest.json
+        run: |
+          echo '{"commit": "'${GITHUB_SHA}'", "changed": ["${{ github.event.inputs.lambda }}"]}' > manifest.json
+      - name: Upload manifest.json to S3
+        run: |
+          aws s3 cp manifest.json s3://352940330073-lambda-source/manifest.json

@@ -1,0 +1,111 @@
+name: Deploy Lambda (SAM)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "dev" ]
+    paths:
+      - "AWS/DataLake/Lambda/deadiver--uat-InvokeTelephonyIntegrationApiFunction/**"
+
+env:
+  NODE_EXTRA_CA_CERTS: /usr/local/share/ca-certificates/ZscalerRootCertificate-2048-SHA256.crt
+  TF_VERSION: 1.1.9
+
+jobs:
+  deploy-dev:
+    runs-on: DEA-DCCC-DEV-GHA-RUNNER-1
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws-us-gov:iam::477301567179:role/dea-dccc-dev-assume-role
+          aws-region: us-gov-west-1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Debug installed tools
+        shell: bash
+        run: |
+          which terraform || true
+          terraform -v || true
+          which aws || true
+          aws --version || true
+          which zip || true
+          zip -v || true
+          which node || true
+          node -v || true
+
+      - name: Package Lambda (python zip)
+        shell: bash
+        working-directory: AWS/DataLake/Lambda/deadiver--uat-InvokeTelephonyIntegrationApiFunction
+        run: |
+          set -euo pipefail
+
+          python3 - <<'EOF'
+          import os
+          import zipfile
+
+          zip_name = "function.zip"
+
+          exclude_dirs = {
+            "node_modules" ,
+            ".aws-sam",
+            ".git",
+            "__pycache__"
+          }
+          
+          def should_exclude(path):
+            parts = set(path.split(os.sep))
+            return bool(parts & exclude_dirs)
+
+          with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED) as z:
+            for root, dirs, files in os.walk("."):
+              if should_exclude(root):
+                continue
+              for f in files:
+                if f == zip_name:
+                  continue
+                full_path = os.path.join(root, f)
+                arcname = os.path.relpath(full_path, ".")
+                z.write(full_path, arcname)
+          print(f"Created {zip_name}")
+          EOF
+
+            ls -lh function.zip
+
+      - name: CloudFormation package (upload artifacts to S3)
+        shell: bash
+        working-directory: AWS/DataLake/Lambda/deadiver--uat-InvokeTelephonyIntegrationApiFunction
+        run: |
+          set -euo pipefail
+          aws cloudformation package \
+            --template-file template.yaml \
+            --s3-bucket dccc-connect-artifacts \
+            --s3-prefix deadiver/dev/InvokeTelephonyIntegrationApiFunction \
+            --output-template-file packaged.yaml
+          ls -lh packaged.yaml
+
+      - name: CloudFormation deploy
+        shell: bash
+        working-directory: AWS/DataLake/Lambda/deadiver--uat-InvokeTelephonyIntegrationApiFunction
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --template-file packaged.yaml \
+            --stack-name deadiver-InvokeTelephonyIntegrationApi-dev \
+            --region us-gov-west-1 \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              Environment=dev \
+              InvokeLayerArn="arn:aws-us-gov:lambda:us-gov-west-1:477301567179:layer:InvokeTelephonyIntegrationApiFunctionLayer:1" \
+              PrivateKeyParamName="/path/dev/private-key" \
+              ScrtEndpointBase="https://example-dev/telephony/v1"

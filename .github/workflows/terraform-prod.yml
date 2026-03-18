@@ -1,0 +1,596 @@
+name: Terraform CI/CD Prod
+
+on:
+#Trigger workflow on pushes to main branch, but only if user folders change
+  push:
+    branches: [main]
+    paths:
+      - 'user*/**'  # Triggers if any user folder is modified
+  # Allow manual trigger from GitHub Actions UI
+  workflow_dispatch:  # Manual trigger
+  
+env:
+      AWS_REGION: us-gov-west-1
+      #LAMBDA_ARTIFACT_BUCKET: dccc-sp-dev-lambda-artifacts
+      #DEFAULT_ROLE_ARN: arn:aws-us-gov:iam::352940330073:role/lambda-execution-role  # make secret for this      
+
+jobs:
+
+  # ===============================
+  # 1. Detect which user folders changed
+  # ===============================
+  detect-folders:
+    runs-on: DEA-DCCC-PROD-GHA-RUNNER-2
+    outputs:
+      folders: ${{ steps.set-folders.outputs.folders }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+           fetch-depth: 0 # Full History for git diff
+           
+      - id: set-folders
+        run: |
+          echo "Detecting user folders with changes..."
+          folders=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^user' | cut -d/ -f1 | sort -u | uniq | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "folders=$folders" >> $GITHUB_OUTPUT
+
+  # ===============================
+  # 2. Run CI pipeline for each changed folder
+  # ===============================        
+  run-ci:
+    name: Run Terraform CI/CD
+    needs: detect-folders
+    runs-on: DEA-DCCC-PROD-GHA-RUNNER-2
+    if: needs.detect-folders.outputs.folders != '[]'
+    strategy:
+      matrix:
+        folder: ${{ fromJson(needs.detect-folders.outputs.folders) }}
+    outputs:
+      folder: ${{ matrix.folder }} 
+    steps:
+
+      # --- Checkout repo
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # --- Setup Terraform CLI    
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        
+      # --- Configure AWS credentials  
+      - name: Configure AWS Credentials from PROD
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-session-name: account-c-session
+          aws-region: us-gov-west-1
+          role-to-assume: arn:aws-us-gov:iam::352935757753:role/dea-dccc-prod-assume-role
+          role-duration-seconds: 3500
+          
+           
+      # ---------------------------------------------------------
+      # Step 1: Detect if this folder has any Lambda-related code
+      # ---------------------------------------------------------   
+      - name: Detect lambda content
+        id: detect-lambda
+        run: |
+          cd ${{ matrix.folder }}
+          if [ -d python ] || [ -d layers ]; then
+            echo "has_lambda=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_lambda=false" >> $GITHUB_OUTPUT
+          fi
+          
+      # ---------------------------------------------------------
+      # Step 2: Zip Lambda function code and/or layer code
+      # ---------------------------------------------------------
+      - name: Zip Lambda code and layers (reproducible)
+        if: steps.detect-lambda.outputs.has_lambda == 'true'
+        run: |
+          set -euo pipefail
+          cd ${{ matrix.folder }}
+          mkdir -p build
+
+          # Function to normalize file modification times for reproducibility
+          normalize_dir() {
+            local dir="$1"
+            # Normalize mtimes of tracked files so zip timestamps are stable
+            if git ls-files "$dir" >/dev/null 2>&1; then
+              git ls-files "$dir" | xargs -I{} touch -t 200001010000 {}
+            else
+              # Fallback if directory isn’t tracked (rare)
+              find "$dir" -type f -print0 | xargs -0 -I{} touch -t 200001010000 {}
+            fi
+          }
+
+          # Function to zip contents of a directory in a stable, sorted way
+          make_zip() {
+            # make_zip <src_dir> <zip_out>
+            local src="$1"
+            local out="$2"
+            # Build a sorted list of files, excluding noise
+            mapfile -t files < <(cd "$src" && \
+              find . -type f \
+                ! -path "*/__pycache__/*" \
+                ! -name "*.pyc" \
+                ! -path "*/.DS_Store" \
+                ! -path "*/.venv/*" \
+              | LC_ALL=C sort)
+            # Create the zip with stable attrs (-X) and deterministic file order
+            rm -f "$out"
+            (cd "$src" && zip -X -q "$OLDPWD/$out" "${files[@]}")
+          }
+
+          #Zip each Lambda function under python/
+          if [ -d python ]; then
+            for dir in python/*; do
+              [ -d "$dir" ] || continue
+              name=$(basename "$dir")
+              normalize_dir "$dir"
+              make_zip "$dir" "build/${name}.zip"
+            done
+          fi
+
+          # Zip each Lambda layer under layers/
+          if [ -d layers ]; then
+            for dir in layers/*; do
+              [ -d "$dir" ] || continue
+              name=$(basename "$dir")
+              normalize_dir "$dir"
+              make_zip "$dir" "build/${name}_layer.zip"
+            done
+          fi
+          
+          echo "Built zips:"; ls -l build || true
+          
+      # ---------------------------------------------------------
+      # Step 3: Upload artifacts to S3 and decide if TF should redeploy
+      # ---------------------------------------------------------
+      - name: Upload artifacts and write overrides (gated by content hash)
+        if: steps.detect-lambda.outputs.has_lambda == 'true'
+        run: |
+          set -euo pipefail
+          cd ${{ matrix.folder }}
+          mkdir -p tfvars_out
+          
+          BUCKET="${{ env.LAMBDA_ARTIFACT_BUCKET }}"
+          CHECKSUM_PREFIX="checksums"  # S3 folder to store per-function content hashes
+          
+          # Compute a stable content hash from source files under python/<func> (paths + file contents)
+          content_hash() {
+            local dir="$1"   # e.g., python/data_cleaner
+            mapfile -t files < <(cd "$dir" && \
+              find . -type f \
+                ! -path "*/__pycache__/*" \
+                ! -name "*.pyc" \
+                ! -path "*/.DS_Store" \
+                ! -path "*/.venv/*" \
+              | LC_ALL=C sort)
+            if [ "${#files[@]}" -eq 0 ]; then echo "EMPTY"; return; fi
+            tmp=$(mktemp)
+            (
+              cd "$dir"
+              for f in "${files[@]}"; do
+                printf "%s\0" "$f"
+                openssl dgst -sha256 -binary "$f" | openssl base64 -A
+                printf "\n"
+              done
+            ) > "$tmp"
+            openssl dgst -sha256 -binary "$tmp" | openssl base64 -A
+            rm -f "$tmp"
+          }
+          
+          # Upload and Lambda layers to S3 (no TF redeploy needed for layers)
+          if compgen -G "build/*_layer.zip" > /dev/null; then
+            for zip in build/*_layer.zip; do
+              base="$(basename "$zip" .zip)"; name="${base%_layer}"
+              aws s3 cp "$zip" "s3://${BUCKET}/layers/${name}.zip"
+            done
+          fi
+
+          # Prepare overrides JSON for Terraform
+          echo '{ "source_code_hashes": {' > tfvars_out/source_code.tfvars.json
+          first=1
+          
+          # For each function zip, compare source content hash to prior run; only emit TF hash on change
+          if compgen -G "build/*.zip" > /dev/null; then
+            for zip in build/*.zip; do
+              base="$(basename "$zip" .zip)"
+              [[ "$base" == *_layer ]] && continue
+              func="$base"
+              src_dir="python/${func}"
+              
+              if [ ! -d "$src_dir" ]; then
+                # Fallback: no source dir found — upload & emit once
+                aws s3 cp "$zip" "s3://${BUCKET}/lambdas/${base}.zip"
+                zip_hash=$(openssl dgst -sha256 -binary "$zip" | openssl base64 -A)
+                if [ $first -eq 1 ]; then first=0; else echo "," >> tfvars_out/source_code.tfvars.json; fi
+                echo "  \"${func}\": { \"source_code_hash\": \"${zip_hash}\" }" >> tfvars_out/source_code.tfvars.json
+                continue
+              fi
+
+              # Compare new source hash to old one stored in S3
+              new_ch=$(content_hash "$src_dir") || new_ch=""
+              old_ch=""
+              if aws s3 cp "s3://${BUCKET}/${CHECKSUM_PREFIX}/${func}.sha256" /tmp/prev.sha256 2>/dev/null; then
+                old_ch="$(cat /tmp/prev.sha256 || true)"
+              fi
+              
+              if [ -n "$new_ch" ] && [ "$new_ch" = "$old_ch" ]; then
+                echo "No source change for ${func}; uploading zip but NOT emitting TF hash."
+                aws s3 cp "$zip" "s3://${BUCKET}/lambdas/${base}.zip"
+              else
+                echo "Source change for ${func}; uploading & emitting TF hash."
+                aws s3 cp "$zip" "s3://${BUCKET}/lambdas/${base}.zip"
+                zip_hash=$(openssl dgst -sha256 -binary "$zip" | openssl base64 -A)
+                if [ $first -eq 1 ]; then first=0; else echo "," >> tfvars_out/source_code.tfvars.json; fi
+                echo "  \"${func}\": { \"source_code_hash\": \"${zip_hash}\" }" >> tfvars_out/source_code.tfvars.json
+                # Save new content hash for next run
+                printf "%s" "$new_ch" > /tmp/new.sha256
+                aws s3 cp /tmp/new.sha256 "s3://${BUCKET}/${CHECKSUM_PREFIX}/${func}.sha256" >/dev/null
+              fi
+            done
+          else
+            echo "ERROR: no function zips found in build/" >&2
+            exit 1
+          fi
+          
+          echo "} }" >> tfvars_out/source_code.tfvars.json
+          echo "=== overrides JSON ==="
+          cat tfvars_out/source_code.tfvars.json
+
+
+
+      - name: Build Glue autogen tfvars from repo folders (glue.yaml optional, no extra tools)
+        if: matrix.folder == 'user_glue'
+        run: |
+          set -euo pipefail
+          cd ${{ matrix.folder }}
+          mkdir -p tfvars_out
+          
+          # ---- Required env / defaults ----
+          GLUE_SCRIPT_BUCKET="${GLUE_SCRIPT_BUCKET:-}"
+          DEFAULT_GLUE_ROLE_ARN="${DEFAULT_GLUE_ROLE_ARN:-}"
+          
+          if [ -z "$GLUE_SCRIPT_BUCKET" ]; then
+            echo "ERROR: GLUE_SCRIPT_BUCKET is empty."
+            exit 1
+          fi
+          if [ -z "$DEFAULT_GLUE_ROLE_ARN" ]; then
+            echo "WARNING: DEFAULT_GLUE_ROLE_ARN is empty. Jobs without role_arn in glue.yaml will fail."
+          fi
+          
+          DEFAULT_GLUE_VERSION="4.0"
+          DEFAULT_MAX_RETRIES="0"
+          DEFAULT_TIMEOUT="60"
+          DEFAULT_WORKER_TYPE="G.1X"
+          DEFAULT_NUM_WORKERS="2"
+          DEFAULT_ENTRYPOINT="job.py"
+          
+          echo '{ "glue_jobs_autogen": {' > tfvars_out/glue.auto.tfvars.json
+          first=1
+          
+          # Helper: safely get a scalar value from glue.yaml (key: value)
+          get_val() {
+            local key="$1"
+            local file="$2"
+            local line
+            line="$(grep -E "^${key}:" "$file" 2>/dev/null || true)"
+            line="$(printf '%s\n' "$line" | head -n1)"
+            line="$(printf '%s\n' "$line" | sed "s/^${key}:[ ]*//")"
+            # strip quotes if any
+            line="$(printf '%s\n' "$line" | sed 's/^"//; s/"$//; s/^'\''//; s/'\''$//')"
+            echo "$line"
+          }
+          
+          shopt -s nullglob
+          for job_dir in scripts/*; do
+            [ -d "$job_dir" ] || continue
+            name="$(basename "$job_dir")"
+            yaml="$job_dir/glue.yaml"
+            
+            echo "Processing Glue job folder: $name"
+            
+            # ---- start with defaults ----
+            role_arn="$DEFAULT_GLUE_ROLE_ARN"
+            glue_version="$DEFAULT_GLUE_VERSION"
+            max_retries="$DEFAULT_MAX_RETRIES"
+            timeout="$DEFAULT_TIMEOUT"
+            worker_type="$DEFAULT_WORKER_TYPE"
+            number_of_workers="$DEFAULT_NUM_WORKERS"
+            entrypoint="$DEFAULT_ENTRYPOINT"
+            
+            # ---- overrides from glue.yaml (simple scalars only) ----
+            if [ -f "$yaml" ]; then
+              echo "Reading overrides from $yaml"
+              raw_role_arn="$(get_val "role_arn" "$yaml")"
+              raw_glue_version="$(get_val "glue_version" "$yaml")"
+              raw_max_retries="$(get_val "max_retries" "$yaml")"
+              raw_timeout="$(get_val "timeout" "$yaml")"
+              raw_worker_type="$(get_val "worker_type" "$yaml")"
+              raw_number_of_workers="$(get_val "number_of_workers" "$yaml")"
+              raw_entrypoint="$(get_val "entrypoint" "$yaml")"
+              
+              [ -n "$raw_role_arn" ] && role_arn="$raw_role_arn"
+              [ -n "$raw_glue_version" ] && glue_version="$raw_glue_version"
+              [ -n "$raw_max_retries" ] && max_retries="$raw_max_retries"
+              [ -n "$raw_timeout" ] && timeout="$raw_timeout"
+              [ -n "$raw_worker_type" ] && worker_type="$raw_worker_type"
+              [ -n "$raw_number_of_workers" ] && number_of_workers="$raw_number_of_workers"
+              [ -n "$raw_entrypoint" ] && entrypoint="$raw_entrypoint"
+            fi
+            
+            # ---- Validate role + script ----
+            if [ -z "$role_arn" ]; then
+              echo "ERROR: Glue job '$name' has no IAM role_arn and DEFAULT_GLUE_ROLE_ARN is not set."
+              exit 1
+            fi
+            
+            script_file="$job_dir/$entrypoint"
+            if [ ! -f "$script_file" ]; then
+              echo "ERROR: Glue job '$name' entrypoint '$entrypoint' not found at: $script_file"
+              echo "Files in folder:"
+              ls -la "$job_dir" || true
+              exit 1
+            fi
+            
+            # ---- Upload chosen entrypoint to S3 ----
+            script_name="$(basename "$script_file")"
+            s3_key="glue/${name}/${script_name}"
+            aws s3 cp "$script_file" "s3://${GLUE_SCRIPT_BUCKET}/${s3_key}"
+            script_location="s3://${GLUE_SCRIPT_BUCKET}/${s3_key}"
+            
+            # ---- Append JSON (avoid heredoc indentation issues) ----
+            if [ $first -eq 1 ]; then
+              first=0
+            else
+              echo "," >> tfvars_out/glue.auto.tfvars.json
+            fi
+            
+            printf '%s' "  \"${name}\": {" >> tfvars_out/glue.auto.tfvars.json
+            printf '%s' " \"purpose\": \"${name}\"," >> tfvars_out/glue.auto.tfvars.json
+            printf '%s' " \"script_location\": \"${script_location}\"," >> tfvars_out/glue.auto.tfvars.json
+            printf '%s' " \"role_arn\": \"${role_arn}\"," >> tfvars_out/glue.auto.tfvars.json
+            printf '%s' " \"glue_version\": \"${glue_version}\"," >> tfvars_out/glue.auto.tfvars.json
+            printf '%s' " \"max_retries\": ${max_retries}," >> tfvars_out/glue.auto.tfvars.json
+            printf '%s' " \"timeout\": ${timeout}," >> tfvars_out/glue.auto.tfvars.json
+            printf '%s' " \"worker_type\": \"${worker_type}\"," >> tfvars_out/glue.auto.tfvars.json
+            printf '%s' " \"number_of_workers\": ${number_of_workers}," >> tfvars_out/glue.auto.tfvars.json
+            printf '%s' " \"default_arguments\": {}," >> tfvars_out/glue.auto.tfvars.json
+            printf '%s' " \"connections\": []," >> tfvars_out/glue.auto.tfvars.json
+            printf '%s' " \"security_configuration\": null," >> tfvars_out/glue.auto.tfvars.json
+            printf '%s\n' " \"tags\": {} }" >> tfvars_out/glue.auto.tfvars.json
+          done
+          
+          echo "} }" >> tfvars_out/glue.auto.tfvars.json
+          
+          echo "=== Glue autogen tfvars ==="
+          ls -la tfvars_out
+          cat tfvars_out/glue.auto.tfvars.json
+               
+      - name: Write empty Glue overrides (no Glue jobs in this folder)
+        if: matrix.folder == 'user_glue'
+        run: |
+          cd ${{ matrix.folder }}
+          mkdir -p tfvars_out
+          if [ ! -d scripts ] || [ -z "$(ls -A scripts 2>/dev/null)" ]; then
+            echo '{ "glue_jobs_autogen": {} }' > tfvars_out/glue.auto.tfvars.json
+          fi
+      
+      - name: Build autogen tfvars from repo folders (lambda.yaml optional, no extra tools)
+        run: |
+          set -euo pipefail
+          cd ${{ matrix.folder }}
+          mkdir -p tfvars_out
+          
+          # ---- Defaults (used only when lambda.yaml omits a value) ----
+          DEFAULT_RUNTIME="python3.13"
+          DEFAULT_HANDLER="app.handler"
+          DEFAULT_TIMEOUT="8"
+          DEFAULT_MEMORY="256"
+          DEFAULT_ROLE_ARN="${DEFAULT_ROLE_ARN:-}"  # from env at top of workflow
+          
+          if [ -z "$DEFAULT_ROLE_ARN" ]; then
+            echo "WARNING: DEFAULT_ROLE_ARN is empty. Lambdas without role_arn in lambda.yaml will fail."
+          fi
+          
+          echo '{ "lambda_functions_autogen": {' > tfvars_out/lambdas.auto.tfvars.json
+          first=1
+          
+          # Helper: safely get a scalar value from lambda.yaml
+          get_val() {
+            local key="$1"
+            local line
+            # grep failure is swallowed by '|| true' so set -e + pipefail won't kill us
+            line="$(grep -E "^${key}:" "$yaml" 2>/dev/null || true)"
+            # only first match
+            line="$(printf '%s\n' "$line" | head -n1)"
+            # strip 'key:' prefix and leading spaces
+            line="$(printf '%s\n' "$line" | sed "s/^${key}:[ ]*//")"
+            echo "$line"
+          }
+          
+          shopt -s nullglob
+          for fn_dir in python/*; do
+            [ -d "$fn_dir" ] || continue
+            name="$(basename "$fn_dir")"
+            yaml="$fn_dir/lambda.yaml"
+            
+            echo "Processing function folder: $name"
+            
+            # --------- start with defaults ---------
+            role_arn="$DEFAULT_ROLE_ARN"
+            handler="$DEFAULT_HANDLER"
+            runtime="$DEFAULT_RUNTIME"
+            timeout="$DEFAULT_TIMEOUT"
+            memory="$DEFAULT_MEMORY"
+            layers="[]"
+            envvars="{}"
+            
+            # --------- Load overrides from lambda.yaml if it exists ---------
+            if [ -f "$yaml" ]; then
+              echo "Reading overrides from $yaml"
+              raw_role_arn="$(get_val "role_arn")"
+              raw_runtime="$(get_val "runtime")"
+              raw_handler="$(get_val "handler")"
+              raw_timeout="$(get_val "timeout")"
+              raw_memory="$(get_val "memory_size")"
+              
+              [ -n "$raw_role_arn" ] && role_arn="$raw_role_arn"
+              [ -n "$raw_runtime" ] && runtime="$raw_runtime"
+              [ -n "$raw_handler" ] && handler="$raw_handler"
+              [ -n "$raw_timeout" ] && timeout="$raw_timeout"
+              [ -n "$raw_memory" ] && memory="$raw_memory"
+              
+              # ---- layers: YAML-ish list ----
+              if grep -q "^layers:" "$yaml"; then
+                layers="["
+                # take lines after 'layers:' that start with '-'
+                while read -r line; do
+                  val="$(printf '%s\n' "$line" | sed 's/^[[:space:]]*-[[:space:]]*//')"
+                  [ -n "$val" ] && layers="${layers}\"$val\","
+                done < <(grep -A 20 "^layers:" "$yaml" | tail -n +2 | grep "-" || true)
+                layers="${layers%,}]"
+                [ "$layers" = "[" ] && layers="[]"  # no real entries
+              fi
+              
+              # ---- environment: simple key: value under 'environment:' ----
+              if grep -q "^environment:" "$yaml"; then
+                envvars="{"
+                # read indented key: value lines
+                while read -r line; do
+                  # strip leading spaces
+                  line="$(printf '%s\n' "$line" | sed 's/^[[:space:]]*//')"
+                  # skip empty / non key:value
+                  echo "$line" | grep -q ":" || continue
+                  key="${line%%:*}"
+                  val="${line#*:}"
+                  # trim spaces
+                  key="$(printf '%s\n' "$key" | sed 's/[[:space:]]*$//')"
+                  val="$(printf '%s\n' "$val" | sed 's/^[[:space:]]*//' )"
+                  envvars="${envvars}\"$key\":\"$val\","
+                done < <(grep -A 20 "^environment:" "$yaml" | tail -n +2 || true)
+                envvars="${envvars%,}}"
+                [ "$envvars" = "{" ] && envvars="{}"
+              fi
+            fi
+            
+            # --------- Validate role_arn ---------
+            if [ -z "$role_arn" ]; then
+              echo "ERROR: Lambda '$name' has no IAM role_arn and DEFAULT_ROLE_ARN is not set."
+              exit 1
+            fi
+            
+            fn_s3_key="lambdas/${name}.zip"
+            layer_s3_key="layers/${name}.zip"
+            
+            [ $first -eq 1 ] && first=0 || echo "," >> tfvars_out/lambdas.auto.tfvars.json
+            
+            cat >> tfvars_out/lambdas.auto.tfvars.json <<EOF
+          "${name}": {
+            "purpose": "${name}",
+            "handler": "${handler}",
+            "runtime": "${runtime}",
+            "role_arn": "${role_arn}",
+            "environment_variables": ${envvars},
+            "s3_key": "${fn_s3_key}",
+            "create_layer": false,
+            "layer_s3_key": "${layer_s3_key}",
+            "layers": ${layers},
+            "timeout": ${timeout},
+            "memory_size": ${memory}
+          }
+          
+          EOF
+          
+          done
+          
+          echo "} }" >> tfvars_out/lambdas.auto.tfvars.json
+          echo "=== autogen tfvars ==="
+          cat tfvars_out/lambdas.auto.tfvars.json
+
+          
+      # ---------------------------------------------------------
+      # Step 4: If no Lambda code exists, make an empty overrides file
+      # ---------------------------------------------------------
+      - name: Write empty overrides (no Lambda in this folder)
+        if: steps.detect-lambda.outputs.has_lambda != 'true'
+        run: |
+          cd ${{ matrix.folder }}
+          mkdir -p tfvars_out
+          echo '{ "source_code_hashes": {} }' > tfvars_out/source_code.tfvars.json
+          echo '{ "lambda_functions_autogen": {} }' > tfvars_out/lambdas.auto.tfvars.json
+
+
+
+      # ===============================
+      # Terraform Plan Stage
+      # ===============================
+      - name: Upload tfvars_out to Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfvars-${{ matrix.folder }}
+          path: ${{ matrix.folder }}/tfvars_out/
+          
+      - name: Terraform Init
+        run: terraform init
+        working-directory: ${{ matrix.folder }}
+        
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ${{ matrix.folder }}
+        
+      - name: Terraform Plan
+        run: |
+          if [ "${{ matrix.folder }}" = "user_glue" ]; then
+            terraform plan -var-file="vars/prod.tfvars" -var-file="tfvars_out/glue.auto.tfvars.json"
+          else
+            terraform plan -var-file="vars/prod.tfvars" -var-file="tfvars_out/lambdas.auto.tfvars.json" -var-file="tfvars_out/source_code.tfvars.json"
+          fi
+        working-directory: ${{ matrix.folder }}
+
+  # ===============================
+  # Terraform Apply (manual approval)
+  # ===============================     
+  terraform-apply:
+    name: Terraform Apply
+    needs: [run-ci, detect-folders]
+    runs-on: DEA-DCCC-PROD-GHA-RUNNER-2
+    environment:
+      name: dev-apply  # Manual approval in GitHub Environments
+      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    strategy:
+      matrix:
+        folder: ${{ fromJson(needs.detect-folders.outputs.folders) }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        
+      - name: Configure AWS Credentials from PROD
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-session-name: account-c-session
+          aws-region: us-gov-west-1
+          role-to-assume: arn:aws-us-gov:iam::352935757753:role/dea-dccc-prod-assume-role
+          role-duration-seconds: 3500
+          
+      - name: Download tfvars_out from Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfvars-${{ matrix.folder }}
+          path: ${{ matrix.folder }}/tfvars_out
+          
+      - name: Terraform Init
+        run: terraform init
+        working-directory: ${{ matrix.folder }}
+        
+      - name: Terraform Apply
+        run: |
+          if [ "${{ matrix.folder }}" = "user_glue" ]; then
+            terraform apply -auto-approve -var-file="vars/dev.tfvars" -var-file="tfvars_out/glue.auto.tfvars.json"
+          else
+            terraform apply -auto-approve -var-file="vars/dev.tfvars" -var-file="tfvars_out/lambdas.auto.tfvars.json" -var-file="tfvars_out/source_code.tfvars.json"
+          fi
+        working-directory: ${{ matrix.folder }}

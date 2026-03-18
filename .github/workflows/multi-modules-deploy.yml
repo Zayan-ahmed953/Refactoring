@@ -1,0 +1,260 @@
+
+name: Terraform Multi-Module Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      modules:
+        description: "Comma-separated list of modules to deploy (ec2,s3,rds...) or 'all'"
+        required: true
+        default: "all"
+      action:
+        description: "Terraform action"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      environment:
+        description: "Terraform environment (dev, test, prod)"
+        required: true
+        default: "dev"
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  NODE_EXTRA_CA_CERTS: /usr/local/share/ca-certificates/ZscalerRootCertificate-2048-SHA256.crt
+  TF_VERSION: 1.1.9
+jobs:
+  # Step 1: Determine modules
+  set-modules:
+    runs-on: DEA-DCCC-PROD-GHA-RUNNER-2
+    outputs:
+      module_list: ${{ steps.format.outputs.module_list }}
+    steps:
+      - name: Convert modules input to JSON list
+        id: format
+        run: |
+          modules="${{ github.event.inputs.modules }}"
+          if [ "$modules" = "all" ]; then
+            echo 'module_list=["ec2","s3","rds","lambda","sns","emr"]' >> $GITHUB_OUTPUT
+          else
+            module_list=$(echo "$modules" | tr ',' '\n' | sed 's/^/"/;s/$/"/' | paste -sd "," -)
+            echo "module_list=[$module_list]" >> $GITHUB_OUTPUT
+          fi
+
+  # Step 2: Check if runner exists and is online
+  check-runner:
+    runs-on: DEA-DCCC-DEV-GHA-RUNNER-1
+    outputs:
+      runner_label: ${{ steps.select.outputs.runner_label }}
+    steps:
+      - name: Determine environment runner label
+        id: determine
+        run: |
+          env="${{ github.event.inputs.environment }}"
+          case "$env" in
+            dev)  label="DEA-DCCC-DEV-GHA-RUNNER-1" ;;
+            test)   label="qa-runner" ;;
+            prod) label="DEA-DCCC-PROD-GHA-RUNNER-2" ;;
+            *)    label="ubuntu-latest" ;;
+          esac
+          echo "runner_label=$label" >> $GITHUB_OUTPUT
+          echo "Using runner label: $label"
+
+      - name: Check runner status and fallback
+        id: select
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          label="${{ steps.determine.outputs.runner_label }}"
+          fallback="DEA-DCCC-DEV-GHA-RUNNER-1"
+          echo "Checking runner '$label'..."
+
+          # Get runner list and status from GitHub API
+          response=$(gh api repos/${{ github.repository }}/actions/runners --jq '.runners[] | select(.labels[].name=="'"$label"'") | .status' || true)
+
+          if [ -z "$response" ]; then
+            echo "No runner found with label '$label'. Falling back to default runner: $fallback"
+            echo "runner_label=$fallback" >> $GITHUB_OUTPUT
+          elif echo "$response" | grep -qi "online"; then
+            echo "Runner '$label' is online and ready."
+            echo "runner_label=$label" >> $GITHUB_OUTPUT
+          else
+            echo "Runner '$label' is offline (status: $response). Falling back to $fallback."
+            echo "runner_label=$fallback" >> $GITHUB_OUTPUT
+          fi
+
+  # Step 3: Terraform Plan
+  plan:
+    needs: [set-modules, check-runner]
+    runs-on: ${{ needs.check-runner.outputs.runner_label }}
+    if: ${{ github.event.inputs.action != 'destroy' }}
+    defaults:
+      run:
+        working-directory: terraform/dccc/application1/dev
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws-us-gov:iam::352935757753:role/dea-dccc-prod-assume-role
+          aws-region: us-gov-west-1
+
+      - uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Init Terraform
+        run: terraform init -input=false -reconfigure
+
+      - name: Select/Create workspace
+        run: |
+          env_name="${{ github.event.inputs.environment }}"
+          terraform workspace list | grep "$env_name" \
+          && terraform workspace select "$env_name" \
+          || terraform workspace new "$env_name"
+
+      - name: Debug tfvars file
+        run: |
+          env_name="${{ github.event.inputs.environment }}"
+          tfvars_file="${env_name}.tfvars"
+          echo "Using tfvars file: $tfvars_file"
+          ls -l
+          echo "===== tfvars contents ====="
+          cat "$tfvars_file" || echo "tfvars file not found!"
+
+      - name: Terraform Plan
+        run: |
+          env_name="${{ github.event.inputs.environment }}"
+          tfvars_file="${env_name}.tfvars"
+          if [ ! -f "$tfvars_file" ]; then
+            echo "tfvars file not found for environment '$env_name'. Expected $tfvars_file"
+            exit 1
+          fi
+
+          terraform plan \
+            -var='deploy_modules=${{ needs.set-modules.outputs.module_list }}' \
+            -var-file="$tfvars_file" \
+            -out=plan.tfplan \
+            -input=false
+
+      - name: Upload Plan Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tf-artifacts
+          path: |
+            terraform/dccc/application1/dev
+            terraform/dccc/application1/dev/plan.tfplan
+
+  # Step 4: Terraform Apply
+  apply:
+    needs: [plan, set-modules, check-runner]
+    if: ${{ github.event.inputs.action == 'apply' }}
+    runs-on: ${{ needs.check-runner.outputs.runner_label }}
+    environment: deploy-approval
+    defaults:
+      run:
+        working-directory: terraform/dccc/application1/dev
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws-us-gov:iam::352935757753:role/dea-dccc-prod-assume-role
+          aws-region: us-gov-west-1
+      - uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Download Plan Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tf-artifacts
+          path: terraform/dccc/application1/dev
+      - name: Terraform Init
+        run: terraform init -input=false -reconfigure
+
+      - name: Select workspace
+        run: terraform workspace select "${{ github.event.inputs.environment }}"
+
+      - name: Terraform Apply
+        run: terraform apply -input=false plan.tfplan
+
+
+   #Step 5: Terraform Destroy
+  destroy:
+    needs: [set-modules, check-runner]
+    if: ${{ github.event.inputs.action == 'destroy' }}
+    runs-on: ${{ needs.check-runner.outputs.runner_label }}
+    environment: destroy-approval
+    defaults:
+      run:
+        working-directory: terraform/dccc/application1/dev
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws-us-gov:iam::352935757753:role/dea-dccc-prod-assume-role
+          aws-region: us-gov-west-1
+      - uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+     
+      - name: Terraform Init
+        run: terraform init -input=false -reconfigure
+
+      - name: Select workspace
+        run: terraform workspace select "${{ github.event.inputs.environment }}"
+
+      - name: Show Terraform State Modules
+        run: |
+          echo "===== Terraform State Modules ====="
+          terraform state list | grep "^module\." | sed 's/\(module\.[^\.]*\).*/\1/' | sort -u
+       
+      - name: Terraform Destroy
+        run: |
+          env_name="${{ github.event.inputs.environment }}"
+          tfvars_file="${env_name}.tfvars"
+
+          if [ ! -f "$tfvars_file" ]; then
+            echo " tfvars file not found for environment '$env_name'. Expected $tfvars_file"
+            exit 1
+          fi
+
+          modules="${{ github.event.inputs.modules }}"
+
+          if [ "$modules" = "all" ]; then
+            echo "Destroying ALL resources..."
+            terraform destroy -auto-approve -input=false -var-file="$tfvars_file"
+            exit 0
+          fi
+
+          echo "Destroying SELECTED modules only..."
+          for module in $(echo "$modules" | tr ',' ' '); do
+
+            # Locate module name in state
+            mod=$(terraform state list \
+              | grep "^module\." \
+              | cut -d'.' -f2 \
+              | sort -u \
+              | grep -i "$module" || true)
+
+            if [ -z "$mod" ]; then
+              echo "No matching module found for '$module'. Skipping."
+              continue
+            fi
+
+            echo "Destroying module: $mod"
+            terraform destroy \
+              -auto-approve \
+              -input=false \
+              -target="module.$mod" \
+              -var-file="$tfvars_file"
+          done

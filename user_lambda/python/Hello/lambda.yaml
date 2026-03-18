@@ -1,0 +1,5 @@
+timeout: 120
+memory_size: 415
+handler: main.handler
+layers:
+  - arn:aws-us-gov:lambda:us-gov-west-1:352940330073:layer:pandas-py313:1
