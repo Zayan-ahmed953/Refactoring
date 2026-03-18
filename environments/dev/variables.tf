@@ -1,8 +1,8 @@
 #-------------------AWS common Variables-------------#
 variable "aws_region" {}
 //variable "token" {}
- variable "aws_access_key" {}
- variable "aws_secret_key" {}
+#  variable "aws_access_key" {}
+#  variable "aws_secret_key" {}
 
 variable "deploy_modules" {
   type = list(string)
