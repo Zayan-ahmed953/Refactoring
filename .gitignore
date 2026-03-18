@@ -15,7 +15,7 @@ crash.log
 # tfsec or security scan outputs
 tfsec-results.*
 *.sarif
-*.json
+
 
 # Local module/package artifacts
 *.zip

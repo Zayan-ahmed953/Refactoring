@@ -1,0 +1,35 @@
+{
+  "AllHandlers": [
+    "app.lambda_handler"
+  ],
+  "ApiGatewayNames": [
+    "shared-http-api-prod"
+  ],
+  "ApiGatewayPaths": [
+    "shared-http-api-prod",
+    "GET /"
+  ],
+  "Architectures": [
+    "x86_64"
+  ],
+  "AttachedIamPolicyNames": [
+    "AWSLambdaBasicExecutionRole"
+  ],
+  "Description": "No value exists",
+  "Environment": {
+    "Variables": {
+      "STAGE": "prod"
+    }
+  },
+  "EphemeralStorage": {
+    "Size": 512
+  },
+  "FunctionName": "app-function-prod",
+  "Handler": "app.lambda_handler",
+  "MemorySize": 128,
+  "Runtime": "python3.12",
+  "Timeout": 10,
+  "TracingConfig": {
+    "Mode": "PassThrough"
+  }
+}
