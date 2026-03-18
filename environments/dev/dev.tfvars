@@ -4,7 +4,7 @@ aws_access_key = ""
 aws_secret_key = ""
 
 #----------------Common Value------------------------------"
- env           = "sandbox"  # Change env as per enviromet Dev/test/Prod
+ env           = "dev"  # Change env as per enviromet Dev/test/Prod
  vpc_id        = "vpc-078259aa7268638fc" # Change VPC ID as per Account
  subnet_id     = "subnet-0cbb750677392eeca" # Change Subnet ID as per Account
  key_name      = "DEA-DCCC-DEV-KEY" # Create key pair as per Account
