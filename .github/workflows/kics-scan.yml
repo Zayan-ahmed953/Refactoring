@@ -37,7 +37,7 @@ jobs:
         continue-on-error: true
         uses: checkmarx/kics-github-action@v2.1.11
         with:
-          path: 'user1,user2'  # Replace with actual user folders
+          path: 'stacks'  # Scan all Terraform stacks
           output_path: kics-output
           
       - name: Display KICS Results (optional)

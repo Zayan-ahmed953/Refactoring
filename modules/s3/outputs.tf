@@ -1,7 +1,9 @@
-output "bucket_name" {
-  value = aws_s3_bucket.this.id
+output "standard_bucket" {
+  value       = aws_s3_bucket.standard.id
+  description = "Standard S3 bucket ID"
 }
 
-output "bucket_arn" {
-  value = aws_s3_bucket.this.arn
+output "glacier_bucket" {
+  value       = aws_s3_bucket.glacier.id
+  description = "Glacier S3 bucket ID"
 }

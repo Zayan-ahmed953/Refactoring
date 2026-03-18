@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'user*/**'  # Triggers if any user folder is modified
+      - 'stacks/**'  # Triggers if any stack folder is modified
   # Allow manual trigger from GitHub Actions UI
   workflow_dispatch:  # Manual trigger
   
@@ -30,8 +30,14 @@ jobs:
            
       - id: set-folders
         run: |
-          echo "Detecting user folders with changes..."
-          folders=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^user' | cut -d/ -f1 | sort -u | uniq | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "Detecting stacks with changes..."
+          # Capture unique stack roots like: stacks/lambda, stacks/glue, stacks/s3
+          folders=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} \
+            | grep '^stacks/' \
+            | cut -d/ -f1-2 \
+            | sort -u \
+            | uniq \
+            | jq -R -s -c 'split("\n") | map(select(length > 0))')
           echo "folders=$folders" >> $GITHUB_OUTPUT
 
   # ===============================
@@ -79,6 +85,19 @@ jobs:
             echo "has_lambda=true" >> $GITHUB_OUTPUT
           else
             echo "has_lambda=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Detect stack type
+        id: detect-stack
+        run: |
+          set -euo pipefail
+          f="${{ matrix.folder }}"
+          if echo "$f" | grep -qE '/glue$'; then
+            echo "type=glue" >> $GITHUB_OUTPUT
+          elif echo "$f" | grep -qE '/lambda$'; then
+            echo "type=lambda" >> $GITHUB_OUTPUT
+          else
+            echo "type=other" >> $GITHUB_OUTPUT
           fi
           
       # ---------------------------------------------------------
@@ -242,7 +261,7 @@ jobs:
 
 
       - name: Build Glue autogen tfvars from repo folders (glue.yaml optional, no extra tools)
-        if: matrix.folder == 'user_glue'
+        if: steps.detect-stack.outputs.type == 'glue'
         run: |
           set -euo pipefail
           cd ${{ matrix.folder }}
@@ -369,7 +388,7 @@ jobs:
           cat tfvars_out/glue.auto.tfvars.json
                
       - name: Write empty Glue overrides (no Glue jobs in this folder)
-        if: matrix.folder == 'user_glue'
+        if: steps.detect-stack.outputs.type == 'glue'
         run: |
           cd ${{ matrix.folder }}
           mkdir -p tfvars_out
@@ -378,6 +397,7 @@ jobs:
           fi
       
       - name: Build autogen tfvars from repo folders (lambda.yaml optional, no extra tools)
+        if: steps.detect-stack.outputs.type == 'lambda'
         run: |
           set -euo pipefail
           cd ${{ matrix.folder }}
@@ -514,7 +534,7 @@ jobs:
       # Step 4: If no Lambda code exists, make an empty overrides file
       # ---------------------------------------------------------
       - name: Write empty overrides (no Lambda in this folder)
-        if: steps.detect-lambda.outputs.has_lambda != 'true'
+        if: steps.detect-stack.outputs.type == 'lambda' && steps.detect-lambda.outputs.has_lambda != 'true'
         run: |
           cd ${{ matrix.folder }}
           mkdir -p tfvars_out
@@ -542,10 +562,12 @@ jobs:
         
       - name: Terraform Plan
         run: |
-          if [ "${{ matrix.folder }}" = "user_glue" ]; then
+          if [ "${{ steps.detect-stack.outputs.type }}" = "glue" ]; then
             terraform plan -var-file="vars/prod.tfvars" -var-file="tfvars_out/glue.auto.tfvars.json"
-          else
+          elif [ "${{ steps.detect-stack.outputs.type }}" = "lambda" ]; then
             terraform plan -var-file="vars/prod.tfvars" -var-file="tfvars_out/lambdas.auto.tfvars.json" -var-file="tfvars_out/source_code.tfvars.json"
+          else
+            terraform plan -var-file="vars/prod.tfvars"
           fi
         working-directory: ${{ matrix.folder }}
 
@@ -588,9 +610,11 @@ jobs:
         
       - name: Terraform Apply
         run: |
-          if [ "${{ matrix.folder }}" = "user_glue" ]; then
-            terraform apply -auto-approve -var-file="vars/dev.tfvars" -var-file="tfvars_out/glue.auto.tfvars.json"
+          if [ "${{ steps.detect-stack.outputs.type }}" = "glue" ]; then
+            terraform apply -auto-approve -var-file="vars/prod.tfvars" -var-file="tfvars_out/glue.auto.tfvars.json"
+          elif [ "${{ steps.detect-stack.outputs.type }}" = "lambda" ]; then
+            terraform apply -auto-approve -var-file="vars/prod.tfvars" -var-file="tfvars_out/lambdas.auto.tfvars.json" -var-file="tfvars_out/source_code.tfvars.json"
           else
-            terraform apply -auto-approve -var-file="vars/dev.tfvars" -var-file="tfvars_out/lambdas.auto.tfvars.json" -var-file="tfvars_out/source_code.tfvars.json"
+            terraform apply -auto-approve -var-file="vars/prod.tfvars"
           fi
         working-directory: ${{ matrix.folder }}
