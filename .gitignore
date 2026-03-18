@@ -3,8 +3,17 @@
 *.tfstate
 *.tfstate.backup
 
+# Terraform provider artifacts
+**/.terraform/providers/
+terraform-provider-*
+
 # Terraform crash logs
 crash.log
+
+# Terraform plan files
+*.tfplan
+*.tfplan.*
+plan.out
 
 # Terraform variable files (often contain secrets)
 *.tfvars.json
