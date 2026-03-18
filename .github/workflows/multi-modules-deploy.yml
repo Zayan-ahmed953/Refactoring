@@ -95,7 +95,7 @@ jobs:
     if: ${{ github.event.inputs.action != 'destroy' }}
     defaults:
       run:
-        working-directory: terraform/dccc/application1/dev
+        working-directory: environments/dev
 
     steps:
       - uses: actions/checkout@v4
@@ -149,8 +149,8 @@ jobs:
         with:
           name: tf-artifacts
           path: |
-            terraform/dccc/application1/dev
-            terraform/dccc/application1/dev/plan.tfplan
+            environments/dev
+            environments/dev/plan.tfplan
 
   # Step 4: Terraform Apply
   apply:
@@ -160,7 +160,7 @@ jobs:
     environment: deploy-approval
     defaults:
       run:
-        working-directory: terraform/dccc/application1/dev
+        working-directory: environments/dev
 
     steps:
       - uses: actions/checkout@v4
@@ -176,7 +176,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: tf-artifacts
-          path: terraform/dccc/application1/dev
+          path: environments/dev
       - name: Terraform Init
         run: terraform init -input=false -reconfigure
 
@@ -195,7 +195,7 @@ jobs:
     environment: destroy-approval
     defaults:
       run:
-        working-directory: terraform/dccc/application1/dev
+        working-directory: environments/dev
 
     steps:
       - uses: actions/checkout@v4
