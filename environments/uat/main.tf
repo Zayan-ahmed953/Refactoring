@@ -51,3 +51,8 @@ resource "aws_lambda_invocation" "invoke_app_function_uat" {
 
   depends_on = [module.lambda]
 }
+#How do I add multiple IAM roles to a single Lambda function, since we have multiple IAM roles attached to a lambda function as you can see in lambda-config.json
+#We need the sample created lambda function to be attached to an API gateway for demo
+#We should use terraform lambda module from https://github.com/Zayan-ahmed953/github-refactoring/blob/main/modules/lambda/main.tf, since it doesnt have unnessasary requirments, but its missing AWS IAM attachment to lambda function
+#We also need a module for creating IAM roles which will then be attached to the lambda function
+#We need to suggest a code scanning tool which will be approved by gov and only then will be implemented, our team tried Sonarqube which was rejected, the best one seems for be AWS Inspector (but needs to be tested if it scans code) We are not talking about terraform code here
