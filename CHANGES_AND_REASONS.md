@@ -2,7 +2,7 @@
 
 This file explains the major changes in the diff in simple terms: **what changed**, **why it changed**, and **what practical benefit we get**.
 
-## 1) Repository layout was reorganized
+## 1) Reposittory layout was reorganized
 
 ### What changed
 - Terraform execution roots were consolidated into clearer top-level folders:
