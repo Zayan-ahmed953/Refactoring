@@ -43,8 +43,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Sentinel (UAT only)
-        if: ${{ github.event.inputs.environment == 'uat' }}
+      - name: Setup Sentinel
         working-directory: .
         run: |
           set -euo pipefail
@@ -64,44 +63,89 @@ jobs:
           install -m 0755 /tmp/sentinel "$RUNNER_TEMP/bin/sentinel"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
-      - name: Sentinel policy scan (UAT only)
-        if: ${{ github.event.inputs.environment == 'uat' }}
+      - name: Sentinel policy scan
         working-directory: .
+        env:
+          TF_ENV: ${{ github.event.inputs.environment }}
         run: |
           set -euo pipefail
 
-          TFVARS_FILE="environments/uat/uat.tfvars"
-          BACKEND_FILE="environments/uat/backend.tf"
-          POLICY_FILE="sentinel/policies/uat_guardrails.sentinel"
+          case "$TF_ENV" in
+            dev)
+              TFVARS_FILE="environments/dev/dev.tfvars"
+              BACKEND_FILE="environments/dev/backend.tf"
+              POLICY_FILE="sentinel/policies/dev_guardrails.sentinel"
+              ;;
+            uat)
+              TFVARS_FILE="environments/uat/uat.tfvars"
+              BACKEND_FILE="environments/uat/backend.tf"
+              POLICY_FILE="sentinel/policies/uat_guardrails.sentinel"
+              ;;
+            prod)
+              TFVARS_FILE="environments/prod/prod.tfvars"
+              BACKEND_FILE="environments/prod/backend.tf"
+              POLICY_FILE="sentinel/policies/prod_guardrails.sentinel"
+              ;;
+            *)
+              echo "ERROR: Unsupported environment '$TF_ENV' for Sentinel policy scan."
+              exit 1
+              ;;
+          esac
 
-          UAT_TFVARS_EXISTS=false
-          UAT_TFVARS_ENV_OK=false
-          UAT_TFVARS_REGION_OK=false
-          UAT_TFVARS_TEAM_PRESENT=false
-          UAT_TFVARS_ORG_PRESENT=false
-          UAT_BACKEND_USES_S3=false
+          TFVARS_EXISTS=false
+          TFVARS_ENV_OK=false
+          TFVARS_REGION_OK=false
+          TFVARS_TEAM_PRESENT=false
+          TFVARS_ORG_PRESENT=false
+          BACKEND_USES_S3=false
 
           if [ -f "$TFVARS_FILE" ]; then
-            UAT_TFVARS_EXISTS=true
-            grep -Eq '^[[:space:]]*env[[:space:]]*=[[:space:]]*"uat"[[:space:]]*$' "$TFVARS_FILE" && UAT_TFVARS_ENV_OK=true || true
-            grep -Eq '^[[:space:]]*region[[:space:]]*=[[:space:]]*"us-gov-west-1"[[:space:]]*$' "$TFVARS_FILE" && UAT_TFVARS_REGION_OK=true || true
-            grep -Eq '^[[:space:]]*team[[:space:]]*=[[:space:]]*".+"[[:space:]]*$' "$TFVARS_FILE" && UAT_TFVARS_TEAM_PRESENT=true || true
-            grep -Eq '^[[:space:]]*organization[[:space:]]*=[[:space:]]*".+"[[:space:]]*$' "$TFVARS_FILE" && UAT_TFVARS_ORG_PRESENT=true || true
+            TFVARS_EXISTS=true
+            grep -Eq "^[[:space:]]*env[[:space:]]*=[[:space:]]*\"${TF_ENV}\"[[:space:]]*$" "$TFVARS_FILE" && TFVARS_ENV_OK=true || true
+            grep -Eq '^[[:space:]]*(region|aws_region)[[:space:]]*=[[:space:]]*"us-gov-west-1"[[:space:]]*$' "$TFVARS_FILE" && TFVARS_REGION_OK=true || true
+            grep -Eq '^[[:space:]]*team[[:space:]]*=[[:space:]]*".+"[[:space:]]*$' "$TFVARS_FILE" && TFVARS_TEAM_PRESENT=true || true
+            grep -Eq '^[[:space:]]*organization[[:space:]]*=[[:space:]]*".+"[[:space:]]*$' "$TFVARS_FILE" && TFVARS_ORG_PRESENT=true || true
           fi
 
           if [ -f "$BACKEND_FILE" ]; then
-            grep -Eq '^[[:space:]]*backend[[:space:]]+"s3"[[:space:]]*\{' "$BACKEND_FILE" && UAT_BACKEND_USES_S3=true || true
+            grep -Eq '^[[:space:]]*backend[[:space:]]+"s3"[[:space:]]*\{' "$BACKEND_FILE" && BACKEND_USES_S3=true || true
           fi
 
-          sentinel apply \
-            -global environment_is_uat=true \
-            -global uat_tfvars_exists=${UAT_TFVARS_EXISTS} \
-            -global uat_tfvars_env_ok=${UAT_TFVARS_ENV_OK} \
-            -global uat_tfvars_region_ok=${UAT_TFVARS_REGION_OK} \
-            -global uat_tfvars_team_present=${UAT_TFVARS_TEAM_PRESENT} \
-            -global uat_tfvars_org_present=${UAT_TFVARS_ORG_PRESENT} \
-            -global uat_backend_uses_s3=${UAT_BACKEND_USES_S3} \
-            "$POLICY_FILE"
+          case "$TF_ENV" in
+            dev)
+              sentinel apply \
+                -global environment_is_dev=true \
+                -global dev_tfvars_exists=${TFVARS_EXISTS} \
+                -global dev_tfvars_env_ok=${TFVARS_ENV_OK} \
+                -global dev_tfvars_region_ok=${TFVARS_REGION_OK} \
+                -global dev_tfvars_team_present=${TFVARS_TEAM_PRESENT} \
+                -global dev_tfvars_org_present=${TFVARS_ORG_PRESENT} \
+                -global dev_backend_uses_s3=${BACKEND_USES_S3} \
+                "$POLICY_FILE"
+              ;;
+            uat)
+              sentinel apply \
+                -global environment_is_uat=true \
+                -global uat_tfvars_exists=${TFVARS_EXISTS} \
+                -global uat_tfvars_env_ok=${TFVARS_ENV_OK} \
+                -global uat_tfvars_region_ok=${TFVARS_REGION_OK} \
+                -global uat_tfvars_team_present=${TFVARS_TEAM_PRESENT} \
+                -global uat_tfvars_org_present=${TFVARS_ORG_PRESENT} \
+                -global uat_backend_uses_s3=${BACKEND_USES_S3} \
+                "$POLICY_FILE"
+              ;;
+            prod)
+              sentinel apply \
+                -global environment_is_prod=true \
+                -global prod_tfvars_exists=${TFVARS_EXISTS} \
+                -global prod_tfvars_env_ok=${TFVARS_ENV_OK} \
+                -global prod_tfvars_region_ok=${TFVARS_REGION_OK} \
+                -global prod_tfvars_team_present=${TFVARS_TEAM_PRESENT} \
+                -global prod_tfvars_org_present=${TFVARS_ORG_PRESENT} \
+                -global prod_backend_uses_s3=${BACKEND_USES_S3} \
+                "$POLICY_FILE"
+              ;;
+          esac
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2

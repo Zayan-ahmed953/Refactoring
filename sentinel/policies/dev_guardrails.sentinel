@@ -1,0 +1,9 @@
+main = rule {
+  environment_is_dev == "true" and
+  dev_tfvars_exists == "true" and
+  dev_tfvars_env_ok == "true" and
+  dev_tfvars_region_ok == "true" and
+  dev_tfvars_team_present == "true" and
+  dev_tfvars_org_present == "true" and
+  dev_backend_uses_s3 == "true"
+}
