@@ -25,6 +25,7 @@ permissions:
 
 env:
   TF_VERSION: "1.6.6"
+  SENTINEL_VERSION: "0.40.0"
 
 jobs:
   run-terraform:
@@ -41,6 +42,66 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup Sentinel (UAT only)
+        if: ${{ github.event.inputs.environment == 'uat' }}
+        working-directory: .
+        run: |
+          set -euo pipefail
+
+          if command -v sentinel >/dev/null 2>&1; then
+            echo "Sentinel already available:"
+            sentinel version
+            exit 0
+          fi
+
+          echo "Installing Sentinel ${SENTINEL_VERSION}..."
+          curl -fsSL -o /tmp/sentinel.zip \
+            "https://releases.hashicorp.com/sentinel/${SENTINEL_VERSION}/sentinel_${SENTINEL_VERSION}_linux_amd64.zip"
+
+          mkdir -p "$RUNNER_TEMP/bin"
+          python3 -c "import zipfile; zipfile.ZipFile('/tmp/sentinel.zip').extractall('/tmp')"
+          install -m 0755 /tmp/sentinel "$RUNNER_TEMP/bin/sentinel"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Sentinel policy scan (UAT only)
+        if: ${{ github.event.inputs.environment == 'uat' }}
+        working-directory: .
+        run: |
+          set -euo pipefail
+
+          TFVARS_FILE="environments/uat/uat.tfvars"
+          BACKEND_FILE="environments/uat/backend.tf"
+          POLICY_FILE="sentinel/policies/uat_guardrails.sentinel"
+
+          UAT_TFVARS_EXISTS=false
+          UAT_TFVARS_ENV_OK=false
+          UAT_TFVARS_REGION_OK=false
+          UAT_TFVARS_TEAM_PRESENT=false
+          UAT_TFVARS_ORG_PRESENT=false
+          UAT_BACKEND_USES_S3=false
+
+          if [ -f "$TFVARS_FILE" ]; then
+            UAT_TFVARS_EXISTS=true
+            grep -Eq '^[[:space:]]*env[[:space:]]*=[[:space:]]*"uat"[[:space:]]*$' "$TFVARS_FILE" && UAT_TFVARS_ENV_OK=true || true
+            grep -Eq '^[[:space:]]*region[[:space:]]*=[[:space:]]*"us-gov-west-1"[[:space:]]*$' "$TFVARS_FILE" && UAT_TFVARS_REGION_OK=true || true
+            grep -Eq '^[[:space:]]*team[[:space:]]*=[[:space:]]*".+"[[:space:]]*$' "$TFVARS_FILE" && UAT_TFVARS_TEAM_PRESENT=true || true
+            grep -Eq '^[[:space:]]*organization[[:space:]]*=[[:space:]]*".+"[[:space:]]*$' "$TFVARS_FILE" && UAT_TFVARS_ORG_PRESENT=true || true
+          fi
+
+          if [ -f "$BACKEND_FILE" ]; then
+            grep -Eq '^[[:space:]]*backend[[:space:]]+"s3"[[:space:]]*\{' "$BACKEND_FILE" && UAT_BACKEND_USES_S3=true || true
+          fi
+
+          sentinel apply \
+            -global environment_is_uat=true \
+            -global uat_tfvars_exists=${UAT_TFVARS_EXISTS} \
+            -global uat_tfvars_env_ok=${UAT_TFVARS_ENV_OK} \
+            -global uat_tfvars_region_ok=${UAT_TFVARS_REGION_OK} \
+            -global uat_tfvars_team_present=${UAT_TFVARS_TEAM_PRESENT} \
+            -global uat_tfvars_org_present=${UAT_TFVARS_ORG_PRESENT} \
+            -global uat_backend_uses_s3=${UAT_BACKEND_USES_S3} \
+            "$POLICY_FILE"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
