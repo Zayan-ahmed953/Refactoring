@@ -21,7 +21,6 @@ on:
           - destroy
 
 permissions:
-  id-token: write
   contents: read
 
 env:
@@ -49,45 +48,6 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
 
-      # - name: Select account secret name for environment
-      #   id: account
-      #   run: |
-      #     set -euo pipefail
-
-      #     case "${{ github.event.inputs.environment }}" in
-      #       dev)
-      #         echo "role_secret_name=AWS_ROLE_ARN_DEV" >> "$GITHUB_OUTPUT"
-      #         ;;
-      #       uat)
-      #         echo "role_secret_name=AWS_ROLE_ARN_UAT" >> "$GITHUB_OUTPUT"
-      #         ;;
-      #       prod)
-      #         echo "role_secret_name=AWS_ROLE_ARN_PROD" >> "$GITHUB_OUTPUT"
-      #         ;;
-      #       *)
-      #         echo "ERROR: No AWS account secret mapping defined for environment '${{ matrix.environment }}'."
-      #         echo "Add a case mapping and corresponding secret."
-      #         exit 1
-      #         ;;
-      #     esac
-
-      # - name: Validate mapped AWS role secret exists
-      #   env:
-      #     ROLE_TO_ASSUME: ${{ secrets[steps.account.outputs.role_secret_name] }}
-      #   run: |
-      #     set -euo pipefail
-      #     if [ -z "${ROLE_TO_ASSUME}" ]; then
-      #       echo "ERROR: Secret '${{ steps.account.outputs.role_secret_name }}' is missing or empty."
-      #       exit 1
-      #     fi
-
-      # - name: Configure AWS credentials for environment
-      #   uses: aws-actions/configure-aws-credentials@v2
-      #   with:
-      #     role-to-assume: ${{ secrets[steps.account.outputs.role_secret_name] }}
-      #     aws-region: us-gov-west-1
-      #     role-session-name: tf-${{ github.event.inputs.environment }}-${{ github.run_id }}
-
       - name: Terraform Init
         run: terraform init -input=false
 
@@ -97,17 +57,33 @@ jobs:
       - name: Terraform ${{ github.event.inputs.action }}
         env:
           TF_ACTION: ${{ github.event.inputs.action }}
+          TF_ENV: ${{ github.event.inputs.environment }}
         run: |
           set -euo pipefail
 
-          TFVARS_FILE="${{ github.event.inputs.environment }}.tfvars"
+          case "$TF_ENV" in
+            dev)
+              TFVARS_FILE="dev.tfvars"
+              ;;
+            uat)
+              TFVARS_FILE="uat.tfvars"
+              ;;
+            prod)
+              TFVARS_FILE="prod.tfvars"
+              ;;
+            *)
+              echo "ERROR: Unsupported environment '$TF_ENV'"
+              exit 1
+              ;;
+          esac
+
           TF_ARGS=(-input=false -no-color)
 
-          if [ -f "$TFVARS_FILE" ]; then
-            TF_ARGS+=("-var-file=$TFVARS_FILE")
-          else
-            echo "No $TFVARS_FILE found. Running without a var-file."
+          if [ ! -f "$TFVARS_FILE" ]; then
+            echo "ERROR: Expected tfvars file '$TFVARS_FILE' not found in $(pwd)"
+            exit 1
           fi
+          TF_ARGS+=("-var-file=$TFVARS_FILE")
 
           case "$TF_ACTION" in
             plan)
