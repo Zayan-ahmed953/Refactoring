@@ -35,7 +35,7 @@ jobs:
     name: Terraform ${{ github.event_name == 'push' && 'apply' || github.event.inputs.action }} (${{ github.event_name == 'push' && 'uat' || github.event.inputs.environment }})
     runs-on:
       - self-hosted
-      - ${{ (github.event_name == 'push' && 'uat' || github.event.inputs.environment) == 'dev' && 'dev' || (github.event_name == 'push' && 'uat' || github.event.inputs.environment) == 'uat' && 'uat' || 'prod' }}
+      - ${{ (github.event_name == 'push' && 'uat' || github.event.inputs.environment) == 'dev' && 'dev' || (github.event_name == 'push' && 'uat' || github.event.inputs.environment) == 'uat' && 'uat' || 'dev' }}
 
     defaults:
       run:
