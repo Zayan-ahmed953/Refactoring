@@ -1,9 +1,9 @@
 main = rule {
-  environment_is_uat and
-  uat_tfvars_exists and
-  uat_tfvars_env_ok and
-  uat_tfvars_region_ok and
-  uat_tfvars_team_present and
-  uat_tfvars_org_present and
-  uat_backend_uses_s3
+  environment_is_uat == "true" and
+  uat_tfvars_exists == "true" and
+  uat_tfvars_env_ok == "true" and
+  uat_tfvars_region_ok == "true" and
+  uat_tfvars_team_present == "true" and
+  uat_tfvars_org_present == "true" and
+  uat_backend_uses_s3 == "true"
 }
