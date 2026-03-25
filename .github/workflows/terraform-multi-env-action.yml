@@ -74,17 +74,17 @@ jobs:
             dev)
               TFVARS_FILE="environments/dev/dev.tfvars"
               BACKEND_FILE="environments/dev/backend.tf"
-              POLICY_FILE="sentinel/policies/dev_guardrails.sentinel"
+              POLICY_GLOB="sentinel/policies/dev_*.sentinel"
               ;;
             uat)
               TFVARS_FILE="environments/uat/uat.tfvars"
               BACKEND_FILE="environments/uat/backend.tf"
-              POLICY_FILE="sentinel/policies/uat_guardrails.sentinel"
+              POLICY_GLOB="sentinel/policies/uat_*.sentinel"
               ;;
             prod)
               TFVARS_FILE="environments/prod/prod.tfvars"
               BACKEND_FILE="environments/prod/backend.tf"
-              POLICY_FILE="sentinel/policies/prod_guardrails.sentinel"
+              POLICY_GLOB="sentinel/policies/prod_*.sentinel"
               ;;
             *)
               echo "ERROR: Unsupported environment '$TF_ENV' for Sentinel policy scan."
@@ -111,41 +111,79 @@ jobs:
             grep -Eq '^[[:space:]]*backend[[:space:]]+"s3"[[:space:]]*\{' "$BACKEND_FILE" && BACKEND_USES_S3=true || true
           fi
 
+          echo "Sentinel pre-check summary for env=$TF_ENV"
+          echo "  tfvars_exists:        $TFVARS_EXISTS"
+          echo "  tfvars_env_ok:        $TFVARS_ENV_OK"
+          echo "  tfvars_region_ok:     $TFVARS_REGION_OK"
+          echo "  tfvars_team_present:  $TFVARS_TEAM_PRESENT"
+          echo "  tfvars_org_present:   $TFVARS_ORG_PRESENT"
+          echo "  backend_uses_s3:      $BACKEND_USES_S3"
+
+          FAILED_CHECKS=()
+          [ "$TFVARS_EXISTS" = "true" ] || FAILED_CHECKS+=("tfvars file missing: $TFVARS_FILE")
+          [ "$TFVARS_ENV_OK" = "true" ] || FAILED_CHECKS+=("env entry mismatch in: $TFVARS_FILE")
+          [ "$TFVARS_REGION_OK" = "true" ] || FAILED_CHECKS+=("region/aws_region not set to us-gov-west-1 in: $TFVARS_FILE")
+          [ "$TFVARS_TEAM_PRESENT" = "true" ] || FAILED_CHECKS+=("team entry missing/empty in: $TFVARS_FILE")
+          [ "$TFVARS_ORG_PRESENT" = "true" ] || FAILED_CHECKS+=("organization entry missing/empty in: $TFVARS_FILE")
+          [ "$BACKEND_USES_S3" = "true" ] || FAILED_CHECKS+=("backend \"s3\" block missing in: $BACKEND_FILE")
+
+          if [ "${#FAILED_CHECKS[@]}" -gt 0 ]; then
+            echo "Detailed failed checks:"
+            for ITEM in "${FAILED_CHECKS[@]}"; do
+              echo "  - $ITEM"
+            done
+          fi
+
           case "$TF_ENV" in
             dev)
-              sentinel apply \
+              GLOBAL_ARGS=(
                 -global environment_is_dev=true \
                 -global dev_tfvars_exists=${TFVARS_EXISTS} \
                 -global dev_tfvars_env_ok=${TFVARS_ENV_OK} \
                 -global dev_tfvars_region_ok=${TFVARS_REGION_OK} \
                 -global dev_tfvars_team_present=${TFVARS_TEAM_PRESENT} \
                 -global dev_tfvars_org_present=${TFVARS_ORG_PRESENT} \
-                -global dev_backend_uses_s3=${BACKEND_USES_S3} \
-                "$POLICY_FILE"
+                -global dev_backend_uses_s3=${BACKEND_USES_S3}
+              )
               ;;
             uat)
-              sentinel apply \
+              GLOBAL_ARGS=(
                 -global environment_is_uat=true \
                 -global uat_tfvars_exists=${TFVARS_EXISTS} \
                 -global uat_tfvars_env_ok=${TFVARS_ENV_OK} \
                 -global uat_tfvars_region_ok=${TFVARS_REGION_OK} \
                 -global uat_tfvars_team_present=${TFVARS_TEAM_PRESENT} \
                 -global uat_tfvars_org_present=${TFVARS_ORG_PRESENT} \
-                -global uat_backend_uses_s3=${BACKEND_USES_S3} \
-                "$POLICY_FILE"
+                -global uat_backend_uses_s3=${BACKEND_USES_S3}
+              )
               ;;
             prod)
-              sentinel apply \
+              GLOBAL_ARGS=(
                 -global environment_is_prod=true \
                 -global prod_tfvars_exists=${TFVARS_EXISTS} \
                 -global prod_tfvars_env_ok=${TFVARS_ENV_OK} \
                 -global prod_tfvars_region_ok=${TFVARS_REGION_OK} \
                 -global prod_tfvars_team_present=${TFVARS_TEAM_PRESENT} \
                 -global prod_tfvars_org_present=${TFVARS_ORG_PRESENT} \
-                -global prod_backend_uses_s3=${BACKEND_USES_S3} \
-                "$POLICY_FILE"
+                -global prod_backend_uses_s3=${BACKEND_USES_S3}
+              )
               ;;
           esac
+
+          shopt -s nullglob
+          POLICIES=( $POLICY_GLOB )
+          shopt -u nullglob
+
+          if [ "${#POLICIES[@]}" -eq 0 ]; then
+            echo "ERROR: No Sentinel policies found for env '$TF_ENV' using pattern '$POLICY_GLOB'"
+            exit 1
+          fi
+
+          echo "Running Sentinel policies:"
+          for POLICY_FILE in "${POLICIES[@]}"; do
+            echo "  - $POLICY_FILE"
+            sentinel apply "${GLOBAL_ARGS[@]}" "$POLICY_FILE"
+          done
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
