@@ -144,8 +144,27 @@ module "sample_iam_roles" {
     }
   }
 }
-#How do I add multiple IAM roles to a single Lambda function, since we have multiple IAM roles attached to a lambda function as you can see in lambda-config.json
-#We need the sample created lambda function to be attached to an API gateway for demo
-#We should use terraform lambda module from https://github.com/Zayan-ahmed953/github-refactoring/blob/main/modules/lambda/main.tf, since it doesnt have unnessasary requirments, but its missing AWS IAM attachment to lambda function
-#We also need a module for creating IAM roles which will then be attached to the lambda function
-#We need to suggest a code scanning tool which will be approved by gov and only then will be implemented, our team tried Sonarqube which was rejected, the best one seems for be AWS Inspector (but needs to be tested if it scans code) We are not talking about terraform code here
+
+## API Gateway
+# Shared HTTP API that can route to one or many Lambda aliases
+module "http_api" {
+  source   = "../../modules/api-gateway"
+  api_name = "shared-http-api-uat"
+
+  # Start with two routes; add more entries here as you create additional Lambda modules.
+  routes = {
+    app_root = {
+      route_key         = local.sample_lambda_function_config.ApiGatewayPaths[1]
+      lambda_name       = module.sample_lambda.lambda_function_name
+      lambda_alias_name = module.sample_lambda.lambda_alias_name
+      lambda_alias_arn  = module.sample_lambda.lambda_alias_arn
+    }
+    api_root = {
+      route_key         = local.app_lambda_config.ApiGatewayPaths[1]
+      lambda_name       = module.lambda.lambda_function_name
+      lambda_alias_name = module.lambda.lambda_alias_name
+      lambda_alias_arn  = module.lambda.lambda_alias_arn
+    }
+  }
+
+}

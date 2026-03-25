@@ -10,12 +10,12 @@ resource "aws_apigatewayv2_stage" "default" {
 }
 
 resource "aws_apigatewayv2_integration" "lambda" {
-  for_each              = var.routes
-  api_id                = aws_apigatewayv2_api.http_api.id
-  integration_type      = "AWS_PROXY"
-  integration_method    = "POST"
+  for_each               = var.routes
+  api_id                 = aws_apigatewayv2_api.http_api.id
+  integration_type       = "AWS_PROXY"
+  integration_method     = "POST"
   payload_format_version = "2.0"
-  integration_uri       = each.value.lambda_alias_arn
+  integration_uri        = each.value.lambda_alias_arn
 }
 
 resource "aws_apigatewayv2_route" "this" {
@@ -32,7 +32,7 @@ resource "aws_lambda_permission" "allow_apigw_invoke" {
   statement_id  = "AllowAPIGatewayInvoke-${each.key}"
   action        = "lambda:InvokeFunction"
   function_name = each.value.lambda_name
-  qualifier     = each.value.lambda_alias_name
+  qualifier     = each.value.lambda_alias_name != "$LATEST" ? each.value.lambda_alias_name : null
   principal     = "apigateway.amazonaws.com"
 
   source_arn = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
