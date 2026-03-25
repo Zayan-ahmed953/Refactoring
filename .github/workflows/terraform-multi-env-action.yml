@@ -31,7 +31,7 @@ jobs:
     name: Terraform ${{ github.event.inputs.action }} (${{ github.event.inputs.environment }})
     runs-on:
       - self-hosted
-      - ${{ github.event.inputs.environment }}
+      - ${{ github.event.inputs.environment == 'dev' && 'dev' || github.event.inputs.environment == 'uat' && 'uat' || 'prod' }}
 
     defaults:
       run:
