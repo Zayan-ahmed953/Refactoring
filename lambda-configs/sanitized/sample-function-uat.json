@@ -1,0 +1,36 @@
+{
+    "AllHandlers": [
+      "app.lambda_handler"
+    ],
+    "ApiGatewayNames": [
+      "shared-http-api-uat"
+    ],
+    "ApiGatewayPaths": [
+      "shared-http-api-uat",
+      "GET /sample"
+    ],
+    "Architectures": [
+      "x86_64"
+    ],
+    "AttachedIamPolicyNames": [
+      "AWSLambdaBasicExecutionRole"
+    ],
+    "Description": "sample lambda function Description",
+    "Environment": {
+      "Variables": {
+        "STAGE": "uat"
+      }
+    },
+    "EphemeralStorage": {
+      "Size": 512
+    },
+    "FunctionName": "sample-function-uat",
+    "Handler": "sample.lambda_handler",
+    "MemorySize": 128,
+    "Runtime": "python3.12",
+    "Timeout": 10,
+    "TracingConfig": {
+      "Mode": "PassThrough"
+    }
+  }
+  
