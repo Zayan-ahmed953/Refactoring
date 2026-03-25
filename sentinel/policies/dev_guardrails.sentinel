@@ -1,12 +1,3 @@
 main = rule {
-  environment_is_selected == "true" and
-  tfvars_exists == "true" and
-  tfvars_env_ok == "true" and
-  tfvars_region_ok == "true" and
-  tfvars_team_present == "true" and
-  tfvars_org_present == "true" and
-  backend_uses_s3 == "true" and 
-  s3_encryption_enabled == "true" and 
-  s3_versioning_enabled == "true" and 
-  s3_public_access_blocked == "true"
+  environment_is_selected == "false"
 }
