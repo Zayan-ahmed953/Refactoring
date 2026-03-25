@@ -1,4 +1,4 @@
-name: Terraform Multi-Env Action
+name: Terraform plan / apply / destroy (Multi-Environment)
 
 on:
   workflow_dispatch:
