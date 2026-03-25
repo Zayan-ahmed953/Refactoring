@@ -134,41 +134,15 @@ jobs:
             done
           fi
 
-          case "$TF_ENV" in
-            dev)
-              GLOBAL_ARGS=(
-                -global environment_is_dev=true \
-                -global dev_tfvars_exists=${TFVARS_EXISTS} \
-                -global dev_tfvars_env_ok=${TFVARS_ENV_OK} \
-                -global dev_tfvars_region_ok=${TFVARS_REGION_OK} \
-                -global dev_tfvars_team_present=${TFVARS_TEAM_PRESENT} \
-                -global dev_tfvars_org_present=${TFVARS_ORG_PRESENT} \
-                -global dev_backend_uses_s3=${BACKEND_USES_S3}
-              )
-              ;;
-            uat)
-              GLOBAL_ARGS=(
-                -global environment_is_uat=true \
-                -global uat_tfvars_exists=${TFVARS_EXISTS} \
-                -global uat_tfvars_env_ok=${TFVARS_ENV_OK} \
-                -global uat_tfvars_region_ok=${TFVARS_REGION_OK} \
-                -global uat_tfvars_team_present=${TFVARS_TEAM_PRESENT} \
-                -global uat_tfvars_org_present=${TFVARS_ORG_PRESENT} \
-                -global uat_backend_uses_s3=${BACKEND_USES_S3}
-              )
-              ;;
-            prod)
-              GLOBAL_ARGS=(
-                -global environment_is_prod=true \
-                -global prod_tfvars_exists=${TFVARS_EXISTS} \
-                -global prod_tfvars_env_ok=${TFVARS_ENV_OK} \
-                -global prod_tfvars_region_ok=${TFVARS_REGION_OK} \
-                -global prod_tfvars_team_present=${TFVARS_TEAM_PRESENT} \
-                -global prod_tfvars_org_present=${TFVARS_ORG_PRESENT} \
-                -global prod_backend_uses_s3=${BACKEND_USES_S3}
-              )
-              ;;
-          esac
+          GLOBAL_ARGS=(
+            -global environment_is_selected=true
+            -global tfvars_exists=${TFVARS_EXISTS}
+            -global tfvars_env_ok=${TFVARS_ENV_OK}
+            -global tfvars_region_ok=${TFVARS_REGION_OK}
+            -global tfvars_team_present=${TFVARS_TEAM_PRESENT}
+            -global tfvars_org_present=${TFVARS_ORG_PRESENT}
+            -global backend_uses_s3=${BACKEND_USES_S3}
+          )
 
           shopt -s nullglob
           POLICIES=( $POLICY_GLOB )
