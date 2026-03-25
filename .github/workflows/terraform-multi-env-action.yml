@@ -140,10 +140,24 @@ jobs:
           done
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: false
+        working-directory: .
+        run: |
+          set -euo pipefail
+
+          if command -v terraform >/dev/null 2>&1; then
+            echo "Terraform already available:"
+            terraform version
+            exit 0
+          fi
+
+          echo "Installing Terraform ${TF_VERSION}..."
+          curl -fsSL -o /tmp/terraform.zip \
+            "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip"
+
+          mkdir -p "$RUNNER_TEMP/bin"
+          python3 -c "import zipfile; zipfile.ZipFile('/tmp/terraform.zip').extractall('/tmp')"
+          install -m 0755 /tmp/terraform "$RUNNER_TEMP/bin/terraform"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Terraform Init
         run: terraform init -input=false
