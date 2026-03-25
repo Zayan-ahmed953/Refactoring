@@ -35,7 +35,7 @@ jobs:
     name: Terraform ${{ github.event_name == 'push' && 'apply' || github.event.inputs.action }} (${{ github.event_name == 'push' && 'uat' || github.event.inputs.environment }})
     runs-on:
       - self-hosted
-      - ${{ (github.event_name == 'push' && 'uat' || github.event.inputs.environment) == 'dev' && 'dev' || (github.event_name == 'push' && 'uat' || github.event.inputs.environment) == 'uat' && 'uat' || 'dev' }}
+      - ${{ (github.event_name == 'push' && 'uat' || github.event.inputs.environment) == 'dev' && 'dev' || (github.event_name == 'push' && 'uat' || github.event.inputs.environment) == 'uat' && 'uat' || 'prod' }}
 
     defaults:
       run:
@@ -104,10 +104,10 @@ jobs:
 
           if [ -f "$TFVARS_FILE" ]; then
             TFVARS_EXISTS=true
-            grep -Eq "^[[:space:]]*env[[:space:]]*=[[:space:]]*\"${TF_ENV}\"[[:space:]]*$" "$TFVARS_FILE" && TFVARS_ENV_OK=true || true
-            grep -Eq '^[[:space:]]*(region|aws_region)[[:space:]]*=[[:space:]]*"us-gov-west-1"[[:space:]]*$' "$TFVARS_FILE" && TFVARS_REGION_OK=true || true
-            grep -Eq '^[[:space:]]*team[[:space:]]*=[[:space:]]*".+"[[:space:]]*$' "$TFVARS_FILE" && TFVARS_TEAM_PRESENT=true || true
-            grep -Eq '^[[:space:]]*organization[[:space:]]*=[[:space:]]*".+"[[:space:]]*$' "$TFVARS_FILE" && TFVARS_ORG_PRESENT=true || true
+            grep -Eq "^[[:space:]]*env[[:space:]]*=[[:space:]]*\"${TF_ENV}\"([[:space:]]*#.*)?[[:space:]]*$" "$TFVARS_FILE" && TFVARS_ENV_OK=true || true
+            grep -Eq '^[[:space:]]*(region|aws_region)[[:space:]]*=[[:space:]]*"us-gov-west-1"([[:space:]]*#.*)?[[:space:]]*$' "$TFVARS_FILE" && TFVARS_REGION_OK=true || true
+            grep -Eq '^[[:space:]]*team[[:space:]]*=[[:space:]]*".+"([[:space:]]*#.*)?[[:space:]]*$' "$TFVARS_FILE" && TFVARS_TEAM_PRESENT=true || true
+            grep -Eq '^[[:space:]]*organization[[:space:]]*=[[:space:]]*".+"([[:space:]]*#.*)?[[:space:]]*$' "$TFVARS_FILE" && TFVARS_ORG_PRESENT=true || true
           fi
 
           if [ -f "$BACKEND_FILE" ]; then
