@@ -30,7 +30,9 @@ env:
 jobs:
   run-terraform:
     name: Terraform ${{ github.event.inputs.action }} (${{ github.event.inputs.environment }})
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - ${{ github.event.inputs.environment }}
 
     defaults:
       run:
