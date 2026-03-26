@@ -22,7 +22,7 @@ on:
   push:
     branches:
       - uat
-      - master
+      - main
 
 permissions:
   contents: read
@@ -33,20 +33,20 @@ env:
 
 jobs:
   run-terraform:
-    name: Terraform ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'apply' || github.event_name == 'push' && github.ref_name == 'master' && 'plan' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod' && (github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy') && 'plan' || github.event.inputs.action }} (${{ github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment }})
+    name: Terraform ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'apply' || github.event_name == 'push' && github.ref_name == 'main' && 'plan' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod' && (github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy') && 'plan' || github.event.inputs.action }} (${{ github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'main' && 'prod' || github.event.inputs.environment }})
     # Runner label mapping lives in the expression below.
     # Update labels here if your self-hosted runner labels differ:
-    # - dev  -> 'dev'
-    # - uat  -> 'uat'
-    # - prod -> 'uat' (temporary fallback)
+    # - dev  -> 'DEA-DCCC-Dev-GHA-RUNNER-1'
+    # - uat  -> 'dea-dccc-preprod'
+    # - prod -> 'DEA-DCCC-PROD-GHA-RUNNER-2'
     runs-on:
       - self-hosted
-      - ${{ (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment) == 'dev' && 'dev' || (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment) == 'uat' && 'uat' || 'uat' }}
+      - ${{ (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'main' && 'prod' || github.event.inputs.environment) == 'dev' && 'DEA-DCCC-Dev-GHA-RUNNER-1' || (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'main' && 'prod' || github.event.inputs.environment) == 'uat' && 'dea-dccc-preprod' || 'DEA-DCCC-PROD-GHA-RUNNER-2' }}
 
     defaults:
       run:
         shell: bash
-        working-directory: environments/${{ github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment }}
+        working-directory: environments/${{ github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'main' && 'prod' || github.event.inputs.environment }}
 
     steps:
       - name: Checkout repository
@@ -75,7 +75,7 @@ jobs:
       - name: Sentinel policy scan
         working-directory: .
         env:
-          TF_ENV: ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment }}
+          TF_ENV: ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'main' && 'prod' || github.event.inputs.environment }}
         run: |
           set -euo pipefail
 
@@ -171,10 +171,10 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Terraform ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'apply' || github.event_name == 'push' && github.ref_name == 'master' && 'plan' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod' && (github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy') && 'plan' || github.event.inputs.action }}
+      - name: Terraform ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'apply' || github.event_name == 'push' && github.ref_name == 'main' && 'plan' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod' && (github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy') && 'plan' || github.event.inputs.action }}
         env:
-          TF_ACTION: ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'apply' || github.event_name == 'push' && github.ref_name == 'master' && 'plan' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod' && (github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy') && 'plan' || github.event.inputs.action }}
-          TF_ENV: ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment }}
+          TF_ACTION: ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'apply' || github.event_name == 'push' && github.ref_name == 'main' && 'plan' || github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod' && (github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy') && 'plan' || github.event.inputs.action }}
+          TF_ENV: ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'main' && 'prod' || github.event.inputs.environment }}
         run: |
           set -euo pipefail
 
@@ -220,7 +220,7 @@ jobs:
 
   manual-approval-prod:
     name: Prod - Approval GW - Commit Trigger
-    if: ${{ github.event_name == 'push' && github.ref_name == 'master' }}
+    if: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
     needs: run-terraform
     # Configure required reviewers in this environment to enforce
     # a manual approval gate before prod apply.
@@ -228,20 +228,20 @@ jobs:
       name: prod-approval
     runs-on:
       - self-hosted
-      - uat
+      - DEA-DCCC-PROD-GHA-RUNNER-2
     steps:
       - name: Await manual approval
         run: echo "Waiting for manual approval via environment protection rules."
 
   approve-and-apply-prod:
     name: Terraform apply (prod after approval)
-    if: ${{ github.event_name == 'push' && github.ref_name == 'master' }}
+    if: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
     needs: manual-approval-prod
     # Production approval job runs on the prod-labeled runner.
     # Change 'prod' below if your production runner uses a different label.
     runs-on:
       - self-hosted
-      - uat
+      - DEA-DCCC-PROD-GHA-RUNNER-2
     environment:
       name: prod
     defaults:
@@ -286,7 +286,7 @@ jobs:
       name: prod-approval
     runs-on:
       - self-hosted
-      - uat
+      - DEA-DCCC-PROD-GHA-RUNNER-2
     steps:
       - name: Await manual approval
         run: echo "Waiting for manual approval before prod apply/destroy."
@@ -297,7 +297,7 @@ jobs:
     needs: manual-approval-prod-dispatch
     runs-on:
       - self-hosted
-      - uat
+      - DEA-DCCC-PROD-GHA-RUNNER-2
     environment:
       name: prod
     defaults:
