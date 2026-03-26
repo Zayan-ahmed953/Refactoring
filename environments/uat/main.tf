@@ -102,7 +102,7 @@ module "sample_lambda" {
   env          = var.env
   purpose      = "function"
 
-  # Lambda configuration from sanitized JSON.
+  # Lambda configuration from sanitized JSON..
   lambda_name = local.sample_lambda_function_config.FunctionName
   # Local artifact contains lambda_function.py, so handler must match that module.
   handler               = "lambda_function.lambda_handler"

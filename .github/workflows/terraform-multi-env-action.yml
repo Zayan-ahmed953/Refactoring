@@ -22,6 +22,7 @@ on:
   push:
     branches:
       - uat
+      - master
 
 permissions:
   contents: read
@@ -32,15 +33,20 @@ env:
 
 jobs:
   run-terraform:
-    name: Terraform ${{ github.event_name == 'push' && 'apply' || github.event.inputs.action }} (${{ github.event_name == 'push' && 'uat' || github.event.inputs.environment }})
+    name: Terraform ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'apply' || github.event_name == 'push' && github.ref_name == 'master' && 'plan' || github.event.inputs.action }} (${{ github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment }})
+    # Runner label mapping lives in the expression below.
+    # Update labels here if your self-hosted runner labels differ:
+    # - dev  -> 'dev'
+    # - uat  -> 'uat'
+    # - prod -> 'uat' (temporary fallback)
     runs-on:
       - self-hosted
-      - ${{ (github.event_name == 'push' && 'uat' || github.event.inputs.environment) == 'dev' && 'dev' || (github.event_name == 'push' && 'uat' || github.event.inputs.environment) == 'uat' && 'uat' || 'prod' }}
+      - ${{ (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment) == 'dev' && 'dev' || (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment) == 'uat' && 'uat' || 'uat' }}
 
     defaults:
       run:
         shell: bash
-        working-directory: environments/${{ github.event_name == 'push' && 'uat' || github.event.inputs.environment }}
+        working-directory: environments/${{ github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment }}
 
     steps:
       - name: Checkout repository
@@ -69,7 +75,7 @@ jobs:
       - name: Sentinel policy scan
         working-directory: .
         env:
-          TF_ENV: ${{ github.event_name == 'push' && 'uat' || github.event.inputs.environment }}
+          TF_ENV: ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment }}
         run: |
           set -euo pipefail
 
@@ -165,10 +171,10 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Terraform ${{ github.event_name == 'push' && 'apply' || github.event.inputs.action }}
+      - name: Terraform ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'apply' || github.event_name == 'push' && github.ref_name == 'master' && 'plan' || github.event.inputs.action }}
         env:
-          TF_ACTION: ${{ github.event_name == 'push' && 'apply' || github.event.inputs.action }}
-          TF_ENV: ${{ github.event_name == 'push' && 'uat' || github.event.inputs.environment }}
+          TF_ACTION: ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'apply' || github.event_name == 'push' && github.ref_name == 'master' && 'plan' || github.event.inputs.action }}
+          TF_ENV: ${{ github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment }}
         run: |
           set -euo pipefail
 
@@ -211,3 +217,63 @@ jobs:
               exit 1
               ;;
           esac
+
+  manual-approval-prod:
+    name: Manual approval (prod)
+    if: ${{ github.event_name == 'push' && github.ref_name == 'master' }}
+    needs: run-terraform
+    # Configure required reviewers in this environment to enforce
+    # a manual approval gate before prod apply.
+    environment:
+      name: prod-approval
+    runs-on:
+      - self-hosted
+      - uat
+    steps:
+      - name: Await manual approval
+        run: echo "Waiting for manual approval via environment protection rules."
+
+  approve-and-apply-prod:
+    name: Terraform apply (prod after approval)
+    if: ${{ github.event_name == 'push' && github.ref_name == 'master' }}
+    needs: manual-approval-prod
+    # Production approval job runs on the prod-labeled runner.
+    # Change 'prod' below if your production runner uses a different label.
+    runs-on:
+      - self-hosted
+      - uat
+    environment:
+      name: prod
+    defaults:
+      run:
+        shell: bash
+        working-directory: environments/prod
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        working-directory: .
+        run: |
+          set -euo pipefail
+
+          if command -v terraform >/dev/null 2>&1; then
+            echo "Terraform already available:"
+            terraform version
+            exit 0
+          fi
+
+          echo "Installing Terraform ${TF_VERSION}..."
+          curl -fsSL -o /tmp/terraform.zip \
+            "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip"
+
+          mkdir -p "$RUNNER_TEMP/bin"
+          python3 -c "import zipfile; zipfile.ZipFile('/tmp/terraform.zip').extractall('/tmp')"
+          install -m 0755 /tmp/terraform "$RUNNER_TEMP/bin/terraform"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Apply (prod)
+        run: terraform apply -auto-approve -input=false -no-color -var-file=prod.tfvars
