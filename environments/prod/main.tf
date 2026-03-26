@@ -4,6 +4,6 @@ resource "aws_instance" "example" {
   subnet_id = "subnet-01799a347de0a1046"
 
   tags = {
-    Name = "HelloWorrldd"
+    Name = "HelloWorrrldd"
   }
 }
