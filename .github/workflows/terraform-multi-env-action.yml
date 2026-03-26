@@ -292,7 +292,7 @@ jobs:
         run: echo "Waiting for manual approval before prod apply/destroy."
 
   execute-prod-dispatch-action:
-    name: Terraform ${{ github.event.inputs.action }} (prod after approval)
+    name: Terraform apply / destroy (prod after approval)
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod' && (github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy') }}
     needs: manual-approval-prod-dispatch
     runs-on:
