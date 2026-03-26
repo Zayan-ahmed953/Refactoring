@@ -52,6 +52,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws-us-gov:iam::084828598848:role/admin-access
+          aws-region: us-east-1
+
       - name: Setup Sentinel
         working-directory: .
         run: |
