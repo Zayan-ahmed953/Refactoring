@@ -38,10 +38,10 @@ jobs:
     # Update labels here if your self-hosted runner labels differ:
     # - dev  -> 'dev'
     # - uat  -> 'uat'
-    # - prod -> 'prod'
+    # - prod -> 'dev' (temporary fallback)
     runs-on:
       - self-hosted
-      - ${{ (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment) == 'dev' && 'dev' || (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment) == 'uat' && 'uat' || 'prod' }}
+      - ${{ (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment) == 'dev' && 'dev' || (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment) == 'uat' && 'uat' || 'dev' }}
 
     defaults:
       run:
@@ -234,7 +234,7 @@ jobs:
       - self-hosted
       - dev
     environment:
-      name: dev
+      name: prod
     defaults:
       run:
         shell: bash
