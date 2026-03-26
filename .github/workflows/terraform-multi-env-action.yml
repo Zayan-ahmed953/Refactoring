@@ -218,10 +218,25 @@ jobs:
               ;;
           esac
 
+  manual-approval-prod:
+    name: Manual approval (prod)
+    if: ${{ github.event_name == 'push' && github.ref_name == 'master' }}
+    needs: run-terraform
+    # Configure required reviewers in this environment to enforce
+    # a manual approval gate before prod apply.
+    environment:
+      name: prod-approval
+    runs-on:
+      - self-hosted
+      - uat
+    steps:
+      - name: Await manual approval
+        run: echo "Waiting for manual approval via environment protection rules."
+
   approve-and-apply-prod:
     name: Terraform apply (prod after approval)
     if: ${{ github.event_name == 'push' && github.ref_name == 'master' }}
-    needs: run-terraform
+    needs: manual-approval-prod
     # Production approval job runs on the prod-labeled runner.
     # Change 'prod' below if your production runner uses a different label.
     runs-on:
