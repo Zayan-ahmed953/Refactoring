@@ -38,10 +38,10 @@ jobs:
     # Update labels here if your self-hosted runner labels differ:
     # - dev  -> 'dev'
     # - uat  -> 'uat'
-    # - prod -> 'dev' (temporary fallback)
+    # - prod -> 'uat' (temporary fallback)
     runs-on:
       - self-hosted
-      - ${{ (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment) == 'dev' && 'dev' || (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment) == 'uat' && 'uat' || 'dev' }}
+      - ${{ (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment) == 'dev' && 'dev' || (github.event_name == 'push' && github.ref_name == 'uat' && 'uat' || github.event_name == 'push' && github.ref_name == 'master' && 'prod' || github.event.inputs.environment) == 'uat' && 'uat' || 'uat' }}
 
     defaults:
       run:
@@ -226,7 +226,7 @@ jobs:
     # Change 'prod' below if your production runner uses a different label.
     runs-on:
       - self-hosted
-      - dev
+      - uat
     environment:
       name: prod
     defaults:
