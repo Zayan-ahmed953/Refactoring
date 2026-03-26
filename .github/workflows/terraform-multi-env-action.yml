@@ -219,7 +219,7 @@ jobs:
           esac
 
   manual-approval-prod:
-    name: Manual approval (prod)
+    name: Prod - Approval GW - Commit Trigger
     if: ${{ github.event_name == 'push' && github.ref_name == 'master' }}
     needs: run-terraform
     # Configure required reviewers in this environment to enforce
@@ -279,7 +279,7 @@ jobs:
         run: terraform apply -auto-approve -input=false -no-color -var-file=prod.tfvars
 
   manual-approval-prod-dispatch:
-    name: Manual approval (prod dispatch apply/destroy)
+    name: Prod - Approval GW - Dispatch Trigger
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod' && (github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy') }}
     needs: run-terraform
     environment:
@@ -292,7 +292,7 @@ jobs:
         run: echo "Waiting for manual approval before prod apply/destroy."
 
   execute-prod-dispatch-action:
-    name: Terraform ${{ github.event.inputs.action }} (prod after approval)
+    name: Terraform apply / destroy (prod after approval)
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod' && (github.event.inputs.action == 'apply' || github.event.inputs.action == 'destroy') }}
     needs: manual-approval-prod-dispatch
     runs-on:
